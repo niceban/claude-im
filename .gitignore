@@ -1,0 +1,22 @@
+# 日志
+logs/
+*.log
+
+# 配置（包含密钥）
+config/bots.yaml
+
+# 本地开发
+.DS_Store
+*.pyc
+__pycache__/
+
+# IDE
+.idea/
+.vscode/
+
+# Sessions (可选，清理时可以保留)
+# sessions/
+
+# 环境变量
+.env
+.env.local
