@@ -2,6 +2,112 @@
 
 > 飞书机器人能力清单与调用方式
 
+---
+
+## 零、快速开始
+
+### 环境要求
+
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| Python | ≥ 3.10 | 主服务语言 |
+| Node.js | ≥ 18 | MCP server 需要 npx |
+| Claude Code CLI | ≥ 2.1.81 | 核心 agent |
+| macOS | ≥ 13 | launchd 支持（其他系统需改用 systemd） |
+
+### 第一步：克隆代码
+
+```bash
+# 克隆主仓库
+git clone https://github.com/your-org/claude-im.git ~/clawrelay-feishu-server
+cd ~/clawrelay-feishu-server
+
+# 安装 Python 依赖
+pip install -r requirements.txt
+# 核心依赖: claude-node（本地安装，见下）, python-dotenv, pyyaml, lark-oapi, aiohttp
+
+# 安装 claude-node（Python 库，用于驱动 Claude Code CLI 子进程）
+# 当前以 editable 模式从 /private/tmp/claude-node 安装
+# 复现时需要先克隆 claude-node 仓库，再以 editable 模式安装
+git clone https://github.com/your-org/claude-node.git /path/to/claude-node
+pip install -e /path/to/claude-node
+```
+
+### 第二步：获取 API Keys
+
+**MiniMax API Key**（两个地方需要）：
+
+1. 注册 https://platform.minimax.io
+2. 获取 API Key（格式：`sk-cp-ATSzsFW4...`，125字符）
+3. 填入 `~/.claude/.claude.json` 的 `mcpServers.MiniMax.env.MINIMAX_API_KEY`
+4. 填入 `~/clawrelay-feishu-server/.env` 的 `ANTHROPIC_AUTH_TOKEN`
+
+**飞书应用**：
+1. 登录 https://open.feishu.cn/app 创建应用
+2. 获取 `App ID`（`cli_` 开头）和 `App Secret`
+3. 配置机器人能力（消息权限）
+4. 发布应用
+
+### 第三步：配置文件
+
+```bash
+cd ~/clawrelay-feishu-server
+
+# 创建 .env
+cat > .env << 'EOF'
+ANTHROPIC_AUTH_TOKEN=sk-cp-你的MiniMaxToken（125字符）
+ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+FEISHU_APP_SECRET=你的飞书AppSecret
+EOF
+
+# 创建 config/bots.yaml（从模板复制）
+cp config/bots.yaml.example config/bots.yaml
+# 编辑 app_id 为你的飞书 App ID
+```
+
+### 第四步：配置 MCP
+
+```bash
+# 在 ~/.claude/.claude.json 中添加：
+{
+  "mcpServers": {
+    "MiniMax": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "minimax-mcp-js"],
+      "env": {
+        "MINIMAX_API_KEY": "sk-cp-你的MiniMaxToken",
+        "MINIMAX_API_HOST": "https://api.minimaxi.com"
+      }
+    }
+  }
+}
+```
+
+### 第五步：启动
+
+```bash
+# 开发模式（前台运行，看日志）
+python main.py
+
+# 生产模式（launchd）
+launchctl load ~/Library/LaunchAgents/com.clawrelay.feishu.plist
+```
+
+### 验证是否正常运行
+
+```bash
+# 1. 检查进程
+ps aux | grep "main.py" | grep -v grep
+
+# 2. 检查日志
+tail -f ~/clawrelay-feishu-server/logs/feishu.log
+
+# 3. 发一条飞书消息给机器人，应该收到回复
+```
+
+---
+
 ## 架构总览
 
 ```
@@ -18,6 +124,48 @@ ClaudeNodeAdapter（claude-node 适配器）
 ClaudeController（Python 库 → Claude Code CLI 子进程）
     ↓
 Claude Code CLI（MCP MiniMax / Agent() / 工具集）
+```
+
+---
+
+## 项目结构
+
+```
+clawrelay-feishu-server/       # 主服务（Python）
+├── main.py                    # 入口，load_dotenv + 启动 WebSocket
+├── .env                       # 环境变量（API keys，gitignore 排除）
+├── config/
+│   ├── bots.yaml              # 机器人配置（app_id、system_prompt）
+│   └── bot_config.py          # 配置加载器（支持环境变量覆盖）
+├── src/
+│   ├── adapters/
+│   │   └── claude_node_adapter.py   # claude-node 适配器
+│   ├── core/
+│   │   ├── claude_relay_orchestrator.py  # 编排器
+│   │   └── session_manager.py          # 会话管理
+│   ├── transport/
+│   │   ├── feishu_ws_client.py        # 飞书 WebSocket 客户端
+│   │   └── message_dispatcher.py       # 消息分发
+│   └── handlers/
+│       └── command_handlers.py        # 命令处理（reset/stop）
+├── logs/
+│   ├── feishu.log
+│   └── feishu.error.log
+└── requirements.txt
+
+~/.claude/.claude.json        # Claude Code MCP 配置
+~/clawrelay-api/               # 可选：Go API 网关（替代 claude-node）
+~/clawrelay-wecom-server/      # 可选：企业微信适配器
+```
+
+**核心依赖**（`requirements.txt`）：
+```
+claude-node>=0.1.0
+python-dotenv
+pyyaml
+lark-oapi
+uvicorn
+aiohttp
 ```
 
 ---
@@ -179,8 +327,52 @@ user_message → _handle_text() → orchestrator.handle_text_message()
 
 ### 5.2 launchd 服务管理
 
+#### plist 模板（`~/Library/LaunchAgents/com.clawrelay.feishu.plist`）
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.clawrelay.feishu</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/anaconda3/bin/python3</string>
+        <string>main.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/c/clawrelay-feishu-server</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/c</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/anaconda3/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- proxy 变量留空或不设置，让 MiniMax API 直连 -->
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/c/clawrelay-feishu-server/logs/feishu.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/c/clawrelay-feishu-server/logs/feishu.error.log</string>
+</dict>
+</plist>
+```
+
+#### 管理命令
+
 ```bash
-# 重启服务
+# 加载（启动服务）
+launchctl load ~/Library/LaunchAgents/com.clawrelay.feishu.plist
+
+# 卸载（停止服务）
+launchctl unload ~/Library/LaunchAgents/com.clawrelay.feishu.plist
+
+# 重启
 launchctl unload ~/Library/LaunchAgents/com.clawrelay.feishu.plist
 launchctl load ~/Library/LaunchAgents/com.clawrelay.feishu.plist
 
