@@ -200,28 +200,119 @@ tail -f ~/clawrelay-feishu-server/logs/feishu.error.log
 
 ## 六、配置参考
 
-### 6.1 环境变量（`.env`）
+### 6.1 环境变量配置链（完整说明）
+
+#### 加载顺序（优先级从高到低）
+
+```
+1. os.environ（进程启动时已设置的环境变量）
+   ↓
+2. .env 文件（通过 main.py 的 load_dotenv() 加载）
+   ↓
+3. bots.yaml 的 env_vars 字段（兜底）
+```
+
+**关键点**：`load_dotenv(override=False)` — 如果 os.environ 已有同名变量，`.env` 文件中的值**不会覆盖**。
+
+#### 必需的环境变量
+
+##### ANTHROPIC_AUTH_TOKEN（Claude Code CLI 认证）
+
+| 属性 | 说明 |
+|------|------|
+| **来源** | `.env` 文件 或 `os.environ` |
+| **用途** | Claude Code CLI 直接 API 调用认证（Agent() tool、多工具组合） |
+| **格式** | `sk-cp-ATSzsFW4...`（MiniMax API Token，125字符） |
+| **使用组件** | `ClaudeController` subprocess（通过 `{**os.environ}` 继承） |
 
 ```bash
-ANTHROPIC_AUTH_TOKEN=sk-cp-...   # MiniMax API Token
-ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+# .env 文件
+ANTHROPIC_AUTH_TOKEN=sk-cp-ATSzsFW4KgGl7Nlv8bI2ZR4k3CBN_Jpz-E4N2JDrsQCddYsYQms-UsM_xFw9PTuJS0Ps7ieCao-UGTOYVegsccyYPDGlYdulUAYKhbwA1OEc_VYtbULguM0
 ```
+
+##### ANTHROPIC_BASE_URL
+
+| 属性 | 说明 |
+|------|------|
+| **来源** | `.env` 文件 或 `os.environ` |
+| **用途** | Claude Code CLI 的 API 端点 |
+| **格式** | `https://api.minimaxi.com/anthropic` |
+
+##### FEISHU_APP_SECRET（飞书认证）
+
+| 属性 | 说明 |
+|------|------|
+| **来源** | `os.environ['FEISHU_APP_SECRET']` > `.env` > `bots.yaml` |
+| **用途** | 飞书 WebSocket 连接认证 |
+| **优先级** | 环境变量 > .env > bots.yaml（环境变量优先，安全） |
+| **代码逻辑** | `os.environ.get("FEISHU_APP_SECRET") or bot_data.get("app_secret", "")` |
+
+```bash
+# .env 文件
+FEISHU_APP_SECRET=woV3uOvc7GBI05CNhjoWGfdfuSUsYk4u
+```
+
+##### MINIMAX_API_KEY（MCP 工具认证）
+
+| 属性 | 说明 |
+|------|------|
+| **来源** | `~/.claude/.claude.json`（MCP server 配置） |
+| **用途** | MCP MiniMax 工具（web_search、web_fetch）认证 |
+| **格式** | `sk-cp-ATSzsFW4...`（同 ANTHROPIC_AUTH_TOKEN） |
+| **使用组件** | `minimax-mcp-js` Node.js MCP server（stdio 模式） |
+
+**注意**：此变量由 Claude Code CLI 启动时通过 `~/.claude/.claude.json` 注入，与 feishu server 进程的 `.env` 无关。
+
+#### .env 文件完整示例
+
+```bash
+# 路径: /Users/c/clawrelay-feishu-server/.env
+# 加载方式: main.py → load_dotenv(override=False)
+
+# Claude Code CLI 认证（必填）
+ANTHROPIC_AUTH_TOKEN=sk-cp-ATSzsFW4KgGl7Nlv8bI2ZR4k3CBN_Jpz-E4N2JDrsQCddYsYQms-UsM_xFw9PTuJS0Ps7ieCao-UGTOYVegsccyYPDGlYdulUAYKhbwA1OEc_VYtbULguM0
+
+# API 端点（必填）
+ANTHROPIC_BASE_URL=https://api.minimaxi.com/anthropic
+
+# 飞书 App Secret（优先从环境变量读取，此处兜底）
+FEISHU_APP_SECRET=woV3uOvc7GBI05CNhjoWGfdfuSUsYk4u
+```
+
+#### launchd 环境变量注意事项
+
+launchd 进程（`com.clawrelay.feishu.plist`）**不继承 shell 环境变量**。
+
+| 变量 | launchd 是否继承 | 说明 |
+|------|-----------------|------|
+| `ANTHROPIC_AUTH_TOKEN` | ❌ | 需写入 `.env` 文件 |
+| `ANTHROPIC_BASE_URL` | ❌ | 需写入 `.env` 文件 |
+| `FEISHU_APP_SECRET` | ❌ | 需写入 `.env` 文件 |
+| `HOME` | ✅ | plist 中显式设置 |
+| `PATH` | ✅ | plist 中显式设置 |
+| `http_proxy` 等 | ✅ | plist 中显式清空 |
 
 ### 6.2 Bot 配置（`config/bots.yaml`）
 
 ```yaml
 bots:
   default:
-    app_id: "cli_..."
-    app_secret: "..."          # 从 FEISHU_APP_SECRET 环境变量读取
-    model: "MiniMax-M2.7"
-    working_dir: "/Users/c/claude-im"
+    app_id: "cli_a925d01967791cd5"   # 飞书应用 App ID
+    app_secret: "woV3uOvc7GBI05..."  # 兜底：环境变量优先，YAML 其次
+    description: "Claude Code Bot"
+    model: "MiniMax-M2.7"            # 模型名称
+    name: "Claude Bot"
+    working_dir: "/Users/c/claude-im" # Claude Code 工作目录
     system_prompt: |
       ## 可用工具
-      - mcp__MiniMax__web_search
-      - mcp__MiniMax__web_fetch
-    allowed_users: []          # 空=不限制
-    env_vars: {}
+      你可以通过以下 MCP 工具获取实时信息，当用户询问实时内容时**必须**使用：
+      - mcp__MiniMax__web_search: 搜索互联网获取最新资讯、新闻、事件
+      - mcp__MiniMax__web_fetch: 获取指定 URL 的网页内容
+      **使用原则**：
+      - 用户问"今天有什么 X"、"最近发生了什么"、"最新消息" → 必须调用 web_search
+      - 不要说"我没有实时信息源"，你明明有
+    allowed_users: []                # 空=不限制，非空=白名单模式
+    env_vars: {}                     # 额外的环境变量（可选）
 ```
 
 ### 6.3 MCP 配置（`~/.claude/.claude.json`）
@@ -234,12 +325,53 @@ bots:
       "command": "npx",
       "args": ["-y", "minimax-mcp-js"],
       "env": {
-        "MINIMAX_API_KEY": "sk-cp-...",
-        "MINIMAX_API_HOST": "https://api.minimaxi.com"
+        "MINIMAX_API_KEY": "sk-cp-ATSzsFW4KgGl7Nlv8bI2ZR4k3CBN_Jpz-E4N2JDrsQCddYsYQms-UsM_xFw9PTuJS0Ps7ieCao-UGTOYVegsccyYPDGlYdulUAYKhbwA1OEc_VYtbULguM0",
+        "MINIMAX_API_HOST": "https://api.minimaxi.com",
+        "MINIMAX_MCP_BASE_PATH": "/Users/c/minimax_outputs/",
+        "MINIMAX_RESOURCE_MODE": "local"
       }
     }
   }
 }
+```
+
+**注意**：`MINIMAX_API_KEY` 在此处的值由 Claude Code CLI 启动时使用，与 `clawrelay-feishu-server/.env` 中的 `ANTHROPIC_AUTH_TOKEN` 是**同一个 token**，但由不同组件在不同时间加载。
+
+### 6.4 环境变量快速检查清单
+
+部署前检查：
+
+```bash
+# 1. 检查 .env 文件是否存在
+ls -la ~/clawrelay-feishu-server/.env
+
+# 2. 验证 .env 中的 token 与 API key 一致
+python3 -c "
+import os
+from dotenv import load_dotenv
+load_dotenv('/Users/c/clawrelay-feishu-server/.env', override=False)
+print('ANTHROPIC_AUTH_TOKEN:', bool(os.environ.get('ANTHROPIC_AUTH_TOKEN')))
+print('ANTHROPIC_BASE_URL:', os.environ.get('ANTHROPIC_BASE_URL'))
+print('FEISHU_APP_SECRET:', bool(os.environ.get('FEISHU_APP_SECRET')))
+"
+
+# 3. 验证 token 有效性
+python3 -c "
+import os, urllib.request, json
+token = os.environ.get('ANTHROPIC_AUTH_TOKEN', '')
+req = urllib.request.Request(
+    'https://api.minimaxi.com/anthropic/v1/messages',
+    headers={
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+    },
+    data=json.dumps({'model': 'MiniMax-M2.7', 'max_tokens': 10, 'messages': [{'role': 'user', 'content': 'hi'}]}).encode(),
+    method='POST'
+)
+with urllib.request.urlopen(req, timeout=10) as resp:
+    print(f'API Status: {resp.status}')
+"
 ```
 
 ---
