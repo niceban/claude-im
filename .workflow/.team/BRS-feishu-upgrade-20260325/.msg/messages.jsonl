@@ -1,0 +1,2 @@
+{"id":"MSG-001","ts":"2026-03-25T03:28:33.752+00:00","from":"synthesizer","to":"coordinator","type":"state_update","summary":"[synthesizer] state_update → coordinator"}
+{"id":"MSG-002","ts":"2026-03-25T03:34:20.415+00:00","from":"evaluator","to":"coordinator","type":"state_update","summary":"[evaluator] state_update → coordinator"}
