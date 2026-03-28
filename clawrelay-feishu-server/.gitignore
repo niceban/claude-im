@@ -9,3 +9,4 @@ logs/
 .venv/
 venv/
 config/bots.yaml
+clawrelay-feishu-server/sessions/

@@ -86,6 +86,9 @@ class ClaudeOrchestrator:
             is_new_session = not relay_session_id
             if is_new_session:
                 relay_session_id = str(uuid.uuid4())
+                logger.info("[Claude] 新会话: relay_id=%s", relay_session_id)
+            else:
+                logger.info("[Claude] 恢复会话: relay_id=%s", relay_session_id)
 
             content = self._enrich_message_with_user_context(user_id, message) if is_new_session else message
             messages = [{"role": "user", "content": content}]
@@ -106,7 +109,8 @@ class ClaudeOrchestrator:
                 )
 
             async for event in self.adapter.stream_chat(
-                messages, effective_system_prompt, session_id=relay_session_id
+                messages, effective_system_prompt, session_id=relay_session_id,
+                resume=relay_session_id if not is_new_session else "",
             ):
                 if isinstance(event, TextDelta):
                     accumulated_text += event.text
@@ -142,6 +146,17 @@ class ClaudeOrchestrator:
 
             await self.session_manager.save_relay_session_id(
                 self.bot_key, effective_key, relay_session_id
+            )
+
+            # 写入 JSONL 历史
+            if message:
+                self.session_manager.append_to_jsonl(
+                    relay_session_id,
+                    {"role": "user", "content": message}
+                )
+            self.session_manager.append_to_jsonl(
+                relay_session_id,
+                {"role": "assistant", "content": accumulated_text}
             )
 
             thinking_lines.append("回复完成")
@@ -239,7 +254,8 @@ class ClaudeOrchestrator:
                 )
 
             async for event in self.adapter.stream_chat(
-                messages, effective_system_prompt, session_id=relay_session_id
+                messages, effective_system_prompt, session_id=relay_session_id,
+                resume=relay_session_id if not is_new_session else "",
             ):
                 if isinstance(event, TextDelta):
                     accumulated_text += event.text
@@ -270,6 +286,17 @@ class ClaudeOrchestrator:
 
             await self.session_manager.save_relay_session_id(
                 self.bot_key, effective_key, relay_session_id
+            )
+
+            # 写入 JSONL 历史
+            if text_summary:
+                self.session_manager.append_to_jsonl(
+                    relay_session_id,
+                    {"role": "user", "content": text_summary}
+                )
+            self.session_manager.append_to_jsonl(
+                relay_session_id,
+                {"role": "assistant", "content": accumulated_text}
             )
 
             thinking_lines.append("回复完成")

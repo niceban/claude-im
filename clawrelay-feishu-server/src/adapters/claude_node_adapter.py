@@ -129,7 +129,7 @@ class ClaudeNodeAdapter:
             return False
         return True
 
-    def _get_controller(self, session_key: str, system_prompt: str = "") -> ClaudeController:
+    def _get_controller(self, session_key: str, system_prompt: str = "", resume: str = "") -> ClaudeController:
         """获取或创建 per-session ClaudeController（线程安全）"""
         # 快速路径：session 已存在
         if session_key in self._controllers:
@@ -157,6 +157,7 @@ class ClaudeNodeAdapter:
                     skip_permissions=True,
                     model=self.model,
                     cwd=self.working_dir or None,
+                    resume=resume or None,
                 )
                 # 非阻塞启动（不等待 init），init 由后台线程完成
                 started = ctrl.start(wait_init_timeout=0)
@@ -189,6 +190,7 @@ class ClaudeNodeAdapter:
         messages: List[dict],
         system_prompt: str = "",
         session_id: str = "",
+        resume: str = "",
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         核心接口：per-session 流式聊天。
@@ -217,7 +219,7 @@ class ClaudeNodeAdapter:
         try:
             # 确保 subprocess 活着（per-session controller）
             if not self._ensure_controller_alive(session_key):
-                ctrl = self._get_controller(session_key, system_prompt)
+                ctrl = self._get_controller(session_key, system_prompt, resume=resume)
                 if not ctrl.alive:
                     yield TextDelta(text="[系统] Claude 服务启动失败，请稍后重试。")
                     return
@@ -246,7 +248,7 @@ class ClaudeNodeAdapter:
             def run_send():
                 t0 = time.time()
                 try:
-                    ctrl = self._get_controller(session_key, system_prompt)
+                    ctrl = self._get_controller(session_key, system_prompt, resume=resume)
                     ctrl.on_message = on_message
                     result = ctrl.send(current_message, timeout=3600)
                     result_queue.put(("done", result))
