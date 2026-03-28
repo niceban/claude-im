@@ -259,3 +259,58 @@ def get_conversation_by_session(relay_session_id: str) -> list[dict]:
     records = [r for r in parse_chat_jsonl() if r.get("relay_session_id") == relay_session_id]
     records.sort(key=lambda item: item.get("timestamp", ""))
     return records
+
+
+# ─── Admin Internal Sessions ─────────────────────────────────────────────────
+
+async def create_admin_session(
+    message: str = "",
+    owner_id: str = "admin",
+    bot_key: str = "_admin_internal",
+) -> dict:
+    """Create a new admin-managed session via clawrelay-feishu-server admin API."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{CLAWRELAY_BASE_URL}/api/v1/admin/sessions",
+            json={"message": message, "owner_id": owner_id, "bot_key": bot_key},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def send_admin_message(relay_session_id: str, message: str) -> dict:
+    """Send a message to an admin-managed session."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{CLAWRELAY_BASE_URL}/api/v1/admin/sessions/{relay_session_id}/messages",
+            json={"message": message},
+            timeout=60.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def get_admin_session_history(relay_session_id: str, limit: int = 50) -> dict:
+    """Get message history for an admin-managed session."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{CLAWRELAY_BASE_URL}/api/v1/admin/sessions/{relay_session_id}/history",
+            params={"limit": limit},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def list_admin_sessions(owner_id: Optional[str] = None) -> dict:
+    """List admin-managed sessions, optionally filtered by owner."""
+    async with httpx.AsyncClient() as client:
+        params = {"owner_id": owner_id} if owner_id else {}
+        resp = await client.get(
+            f"{CLAWRELAY_BASE_URL}/api/v1/admin/sessions",
+            params=params,
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()

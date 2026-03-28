@@ -11,6 +11,10 @@ from app.integrations.clawrelay import (
     get_chat_statistics,
     search_chat_history,
     get_conversation_by_session,
+    create_admin_session,
+    send_admin_message,
+    get_admin_session_history,
+    list_admin_sessions,
 )
 
 router = APIRouter(tags=["metrics"])
@@ -112,3 +116,68 @@ async def read_conversation(
 ) -> list:
     """Get all messages in a conversation"""
     return get_conversation_by_session(relay_session_id)
+
+
+# ─── Admin Internal Sessions ─────────────────────────────────────────────────
+
+@router.post("/chat/sessions", tags=["metrics"])
+async def create_chat_session(
+    request: dict,
+    session: SessionDep,
+    current_user: User = CurrentUser,
+) -> dict:
+    """Create a new admin-managed chat session.
+
+    The session is owned by the current user and can be used to chat
+    with Claude directly from the dashboard.
+    """
+    message = request.get("message", "")
+    owner_id = str(current_user.id)
+    result = await create_admin_session(
+        message=message,
+        owner_id=owner_id,
+    )
+    return result
+
+
+@router.post("/chat/sessions/{relay_session_id}/messages", tags=["metrics"])
+async def send_chat_message(
+    relay_session_id: str,
+    request: dict,
+    session: SessionDep,
+    current_user: User = CurrentUser,
+) -> dict:
+    """Send a message to an admin-managed session."""
+    from fastapi import HTTPException
+    message = request.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+    return await send_admin_message(relay_session_id, message)
+
+
+@router.get("/chat/sessions/{relay_session_id}/history", tags=["metrics"])
+async def read_chat_session_history(
+    relay_session_id: str,
+    session: SessionDep,
+    current_user: User = CurrentUser,
+    limit: int = 50,
+) -> dict:
+    """Get message history for an admin-managed session."""
+    return await get_admin_session_history(relay_session_id, limit=limit)
+
+
+@router.get("/chat/sessions", tags=["metrics"])
+async def read_chat_sessions(
+    session: SessionDep,
+    current_user: User = CurrentUser,
+    mine_only: bool = True,
+) -> dict:
+    """List admin-managed sessions.
+
+    Non-admin users only see their own sessions.
+    Admins can see all sessions by passing mine_only=false.
+    """
+    owner_id = None
+    if mine_only and not current_user.is_superuser:
+        owner_id = str(current_user.id)
+    return await list_admin_sessions(owner_id=owner_id)

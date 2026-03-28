@@ -1,11 +1,12 @@
 import React from "react"
-import { useSuspenseQuery } from "@tanstack/react-query"
-import { createFileRoute, Link } from "@tanstack/react-router"
-import { Bot, Clock, User } from "lucide-react"
+import { useSuspenseQuery, useQueryClient } from "@tanstack/react-query"
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router"
+import { Bot, Clock, Plus, User } from "lucide-react"
 import { Suspense } from "react"
 
 import { MetricsService } from "@/client"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -13,6 +14,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -89,6 +100,11 @@ export const Route = createFileRoute("/_layout/sessions/")({
 function SessionsContent() {
   const [statusFilter, setStatusFilter] = React.useState<string>("all")
   const [page, setPage] = React.useState(1)
+  const [newSessionOpen, setNewSessionOpen] = React.useState(false)
+  const [newSessionMessage, setNewSessionMessage] = React.useState("")
+  const [isCreating, setIsCreating] = React.useState(false)
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const PAGE_SIZE = 20
 
   const { data: sessionsData } = useSuspenseQuery({
@@ -105,6 +121,30 @@ function SessionsContent() {
     statusFilter === "all"
       ? sessions
       : sessions.filter((s) => s.status === statusFilter)
+
+  const handleCreateSession = async () => {
+    if (isCreating) return
+    setIsCreating(true)
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000"
+      const resp = await fetch(`${apiUrl}/api/v1/chat/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: newSessionMessage }),
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        setNewSessionOpen(false)
+        setNewSessionMessage("")
+        queryClient.invalidateQueries({ queryKey: ["sessions"] })
+        if (data.relay_session_id) {
+          navigate({ to: "/sessions/$sessionId", params: { sessionId: data.relay_session_id } })
+        }
+      }
+    } finally {
+      setIsCreating(false)
+    }
+  }
 
   // Aggregate sessions by hour for timeline chart
   const hourlyData = React.useMemo(() => {
@@ -131,6 +171,45 @@ function SessionsContent() {
           </p>
         </div>
         <div className="flex items-center gap-4">
+          <Dialog open={newSessionOpen} onOpenChange={setNewSessionOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4 mr-1" />
+                新建会话
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>新建会话</DialogTitle>
+                <DialogDescription>
+                  创建一个新的 Claude 对话会话。你可以在下方输入第一条消息。
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <Input
+                  placeholder="第一条消息（可选）..."
+                  value={newSessionMessage}
+                  onChange={(e) => setNewSessionMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault()
+                      handleCreateSession()
+                    }
+                  }}
+                  disabled={isCreating}
+                  className="w-full"
+                />
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setNewSessionOpen(false)} disabled={isCreating}>
+                  取消
+                </Button>
+                <Button onClick={handleCreateSession} disabled={isCreating}>
+                  {isCreating ? "创建中..." : "创建并发送"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1) }}>
             <SelectTrigger className="w-[140px]">
               <SelectValue placeholder="Status" />

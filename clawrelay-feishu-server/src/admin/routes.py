@@ -10,6 +10,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -149,6 +150,334 @@ async def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "session_manager": "ok" if mgr else "error",
+    }
+
+
+# ─── Admin Claude Chat（独立于 Feishu 的会话管理）────────────────────────────
+
+_admin_adapter = None
+_admin_adapter_lock = threading.Lock()
+_ADMIN_BOT_KEY = "_admin_internal"
+
+
+def _get_admin_adapter():
+    """获取 Admin 专用 ClaudeNodeAdapter（单例，按需创建）"""
+    global _admin_adapter
+    if _admin_adapter is not None:
+        return _admin_adapter
+
+    with _admin_adapter_lock:
+        if _admin_adapter is not None:
+            return _admin_adapter
+
+        try:
+            from config.bot_config import BotConfigManager
+            from src.adapters.claude_node_adapter import ClaudeNodeAdapter
+        except Exception as e:
+            logger.error(f"[AdminAPI] 无法加载依赖: {e}")
+            raise HTTPException(status_code=500, detail="服务初始化失败，请检查配置")
+
+        cfg = BotConfigManager()
+        bots = cfg.get_all_bots()
+        if not bots:
+            raise HTTPException(status_code=500, detail="未配置任何机器人")
+
+        # 使用第一个 bot 的配置作为 admin adapter 的配置
+        first_bot = next(iter(bots.values()))
+        _admin_adapter = ClaudeNodeAdapter(
+            model=first_bot.model,
+            working_dir=first_bot.working_dir,
+            env_vars={},  # admin 会话不继承 bot 环境变量
+            system_prompt=first_bot.system_prompt or "",
+        )
+        logger.info("[AdminAPI] ClaudeNodeAdapter 已初始化（model=%s, dir=%s）",
+                     first_bot.model, first_bot.working_dir)
+        return _admin_adapter
+
+
+@router.post("/admin/sessions")
+async def create_admin_session(
+    request: dict,
+):
+    """在 dashboard 新建一个内部会话，返回 relay_session_id。
+
+    Body:
+        message: 初始消息内容（可选）
+        bot_key: 使用哪个机器人配置（可选，默认第一个）
+        owner_id: 创建者 ID（可选）
+    """
+    mgr = _get_session_manager()
+    if mgr is None:
+        raise HTTPException(status_code=500, detail="SessionManager 不可用")
+
+    relay_session_id = str(uuid.uuid4())
+    effective_key = f"{_ADMIN_BOT_KEY}_admin_{relay_session_id}"
+    owner_id = request.get("owner_id", "admin")
+    bot_key = request.get("bot_key", _ADMIN_BOT_KEY)
+
+    # 保存 session 记录
+    await mgr.save_relay_session_id(bot_key, effective_key, relay_session_id)
+
+    # 记录 meta（包含 owner）
+    import sqlite3
+    from pathlib import Path
+    _SQLITE_DB = Path(__file__).parent.parent.parent / "sessions" / "sessions.db"
+    _SQLITE_DB.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_SQLITE_DB))
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS admin_session_meta (
+                relay_id    TEXT PRIMARY KEY,
+                owner_id    TEXT NOT NULL,
+                created_at  TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT OR IGNORE INTO admin_session_meta (relay_id, owner_id, created_at)
+            VALUES (?, ?, ?)
+        """, (relay_session_id, owner_id, datetime.now().isoformat()))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # 如果有初始消息，立即处理
+    message = request.get("message", "").strip()
+    if message:
+        # 在后台处理首条消息
+        asyncio.create_task(_process_admin_message(
+            relay_session_id=relay_session_id,
+            effective_key=effective_key,
+            bot_key=bot_key,
+            message=message,
+            owner_id=owner_id,
+        ))
+
+    return {
+        "relay_session_id": relay_session_id,
+        "effective_key": effective_key,
+        "status": "processing" if message else "ready",
+        "timestamp": datetime.now().isoformat(),
+    }
+
+
+async def _process_admin_message(
+    relay_session_id: str,
+    effective_key: str,
+    bot_key: str,
+    message: str,
+    owner_id: str,
+):
+    """后台处理 admin 会话的首条消息"""
+    try:
+        adapter = _get_admin_adapter()
+        session_lock = await adapter._get_session_lock(relay_session_id)
+
+        try:
+            await asyncio.wait_for(session_lock.acquire(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"[AdminAPI] 无法获取 session lock: {relay_session_id}")
+            return
+
+        try:
+            from src.core.claude_relay_orchestrator import SECURITY_SYSTEM_PROMPT
+            effective_prompt = SECURITY_SYSTEM_PROMPT + f"\n[当前会话] FEISHU_CHAT_ID={effective_key}"
+            messages = [{"role": "user", "content": message}]
+
+            accumulated_text = ""
+            async for event in adapter.stream_chat(
+                messages, effective_prompt,
+                session_id=relay_session_id, resume="",
+            ):
+                if hasattr(event, 'text'):
+                    accumulated_text += event.text
+
+            if not accumulated_text.strip():
+                accumulated_text = "AI 已完成处理，但未生成文本回复。"
+
+            mgr = _get_session_manager()
+            if mgr:
+                mgr.append_to_jsonl(relay_session_id, {"role": "user", "content": message})
+                mgr.append_to_jsonl(relay_session_id, {"role": "assistant", "content": accumulated_text})
+
+            # 推送到 WebSocket 客户端
+            _push_ws_event(relay_session_id, {
+                "type": "message",
+                "role": "assistant",
+                "content": accumulated_text,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+        finally:
+            session_lock.release()
+
+    except Exception as e:
+        logger.error(f"[AdminAPI] 处理 admin 消息失败: {e}", exc_info=True)
+        _push_ws_event(relay_session_id, {
+            "type": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+        })
+
+
+@router.post("/admin/sessions/{relay_session_id}/messages")
+async def send_admin_message(
+    relay_session_id: str,
+    request: dict,
+):
+    """向指定会话发送消息（流式返回）"""
+    message = request.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="消息内容不能为空")
+
+    mgr = _get_session_manager()
+    if mgr is None:
+        raise HTTPException(status_code=500, detail="SessionManager 不可用")
+
+    # 写用户消息到 JSONL
+    mgr.append_to_jsonl(relay_session_id, {"role": "user", "content": message})
+
+    # 立即推送用户消息事件（让前端立即看到自己的消息）
+    _push_ws_event(relay_session_id, {
+        "type": "message",
+        "role": "user",
+        "content": message,
+        "timestamp": datetime.now().isoformat(),
+    })
+
+    # 后台异步处理
+    asyncio.create_task(_process_admin_message_stream(
+        relay_session_id=relay_session_id,
+        message=message,
+    ))
+
+    return {"status": "processing", "timestamp": datetime.now().isoformat()}
+
+
+async def _process_admin_message_stream(relay_session_id: str, message: str):
+    """后台流式处理消息，通过 WebSocket 推送"""
+    try:
+        adapter = _get_admin_adapter()
+        session_lock = await adapter._get_session_lock(relay_session_id)
+
+        try:
+            await asyncio.wait_for(session_lock.acquire(), timeout=10.0)
+        except asyncio.TimeoutError:
+            _push_ws_event(relay_session_id, {
+                "type": "error", "error": "会话忙，请稍后重试"
+            })
+            return
+
+        try:
+            from src.core.claude_relay_orchestrator import SECURITY_SYSTEM_PROMPT
+            sessions = adapter._controllers
+            ctrl = adapter._controllers.get(relay_session_id)
+            effective_key = relay_session_id
+            effective_prompt = SECURITY_SYSTEM_PROMPT + f"\n[当前会话] FEISHU_CHAT_ID={effective_key}"
+            messages = [{"role": "user", "content": message}]
+
+            accumulated_text = ""
+            async for event in adapter.stream_chat(
+                messages, effective_prompt,
+                session_id=relay_session_id, resume=relay_session_id,
+            ):
+                if hasattr(event, 'text'):
+                    accumulated_text += event.text
+                    _push_ws_event(relay_session_id, {
+                        "type": "delta",
+                        "content": event.text,
+                        "timestamp": datetime.now().isoformat(),
+                    })
+
+            if not accumulated_text.strip():
+                accumulated_text = "AI 已完成处理，但未生成文本回复。"
+
+            mgr = _get_session_manager()
+            if mgr:
+                mgr.append_to_jsonl(relay_session_id, {"role": "assistant", "content": accumulated_text})
+
+            _push_ws_event(relay_session_id, {
+                "type": "done",
+                "content": accumulated_text,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+        finally:
+            session_lock.release()
+
+    except Exception as e:
+        logger.error(f"[AdminAPI] 流式处理失败: {e}", exc_info=True)
+        _push_ws_event(relay_session_id, {
+            "type": "error", "error": str(e)
+        })
+
+
+def _push_ws_event(session_id: str, event: dict):
+    """推送事件到订阅该 session 的 WebSocket 客户端"""
+    with _ws_clients_lock:
+        clients = _ws_clients.get(session_id, [])
+        disconnected = []
+        for ws in clients:
+            try:
+                ws.send_json(event)
+            except Exception:
+                disconnected.append(ws)
+        for ws in disconnected:
+            clients.remove(ws)
+
+
+@router.get("/admin/sessions/{relay_session_id}/history")
+async def get_admin_session_history(relay_session_id: str, limit: int = 50):
+    """获取 admin 会话的历史消息"""
+    mgr = _get_session_manager()
+    if mgr is None:
+        raise HTTPException(status_code=500, detail="SessionManager 不可用")
+    entries = mgr.read_jsonl(relay_session_id, limit=limit)
+    return {"history": entries, "timestamp": datetime.now().isoformat()}
+
+
+@router.get("/admin/sessions")
+async def list_admin_sessions(owner_id: Optional[str] = None):
+    """列出所有 admin 会话（可选按 owner_id 过滤）"""
+    import sqlite3
+    from pathlib import Path
+    _SQLITE_DB = Path(__file__).parent.parent.parent / "sessions" / "sessions.db"
+    if not _SQLITE_DB.exists():
+        return {"sessions": [], "total": 0, "timestamp": datetime.now().isoformat()}
+
+    conn = sqlite3.connect(str(_SQLITE_DB))
+    try:
+        if owner_id:
+            rows = conn.execute("""
+                SELECT m.relay_id, m.owner_id, m.created_at,
+                       s.last_active
+                FROM admin_session_meta m
+                LEFT JOIN sessions s ON s.relay_id = m.relay_id
+                WHERE m.owner_id = ?
+                ORDER BY m.created_at DESC
+            """, (owner_id,)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT m.relay_id, m.owner_id, m.created_at,
+                       s.last_active
+                FROM admin_session_meta m
+                LEFT JOIN sessions s ON s.relay_id = m.relay_id
+                ORDER BY m.created_at DESC
+            """).fetchall()
+    finally:
+        conn.close()
+
+    sessions = []
+    for row in rows:
+        sessions.append({
+            "relay_session_id": row[0],
+            "owner_id": row[1],
+            "created_at": row[2],
+            "last_active": row[3] or "",
+        })
+    return {
+        "sessions": sessions,
+        "total": len(sessions),
+        "timestamp": datetime.now().isoformat(),
     }
 
 
