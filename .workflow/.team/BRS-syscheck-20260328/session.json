@@ -1,0 +1,16 @@
+{
+  "session_id": "BRS-syscheck-20260328",
+  "team_name": "brainstorm",
+  "pipeline_mode": "quick",
+  "topic": "系统业务可用性完整检查",
+  "angles": [
+    "IM消息处理流程",
+    "ClaudeNode会话管理",
+    "Report数据聚合",
+    "前端页面加载"
+  ],
+  "gc_round": 0,
+  "max_gc_rounds": 1,
+  "status": "active",
+  "completion_action": "auto_keep"
+}

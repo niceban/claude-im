@@ -1,0 +1,17 @@
+{
+  "session_id": "BRS-convergence-check-20260328",
+  "team_name": "brainstorm",
+  "pipeline_mode": "quick",
+  "topic": "验证 document-current-project-issues 变更是否真正收敛完成",
+  "angles": [
+    "标准文档一致性",
+    "冲突词汇清理",
+    "SSE状态标注",
+    "后台入口唯一性"
+  ],
+  "gc_round": 0,
+  "max_gc_rounds": 1,
+  "status": "active",
+  "completion_action": "auto_keep",
+  "created": "2026-03-28"
+}
