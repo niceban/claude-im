@@ -1,0 +1,21 @@
+{
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "claude-node": {
+        "baseUrl": "http://127.0.0.1:18792",
+        "apiKey": "not-needed",
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "claude-sonnet-4-6",
+            "name": "Claude Sonnet 4",
+            "input": ["text"],
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  }
+}

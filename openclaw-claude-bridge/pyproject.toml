@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openclaw-claude-bridge"
+version = "0.1.0"
+description = "OpenClaw claude-node Bridge Server"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "claude-node>=0.1.0",
+]
+
+[project.scripts]
+clawrelay-bridge = "clawrelay_bridge.__main__:main"

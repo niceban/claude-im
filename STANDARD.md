@@ -7,18 +7,26 @@
 
 ### 1.1 IM 执行链路
 
-IM 侧采用 **直连 `claude-node`** 的方案。
+IM 侧采用 **OpenClaw + claude-node** 的分层方案。
 
 标准链路：
 
 ```text
-Feishu / WeCom
-  -> clawrelay-feishu-server / clawrelay-wecom-server
-  -> claude-node
+Feishu / WeCom / ...
+  -> OpenClaw (通讯层，24+ 消息通道)
+  -> openclaw-claude-bridge (Provider 协议转换)
+  -> claude-node (AI 处理层，Claude CLI subprocess)
   -> Claude Code CLI
 ```
 
-`clawrelay-api` **不再属于标准架构**。
+OpenClaw 作为通讯层，通过 Provider 插件机制调用 claude-node。
+
+**Fallback 机制**：claude-node 宕机时，OpenClaw 上线执行维修任务，修好后立即下线。
+
+**已废弃**：
+- `clawrelay-feishu-server` → 已归档
+- `clawrelay-report` → 已归档
+- `clawrelay-api` → 不再属于标准架构
 
 ### 1.2 报表 / 管理后台
 
@@ -84,33 +92,38 @@ SSE **目前不算已确认能力**。
 
 ```text
 /Users/c/claude-im                  # 标准文档 + 辅助脚本
-/Users/c/clawrelay-feishu-server    # 飞书 IM 适配层，直连 claude-node
-/Users/c/clawrelay-wecom-server     # 企业微信适配层（可选）
-/Users/c/claude-node                # Python 封装，直接拉起 Claude Code CLI
-/Users/c/clawrelay-report           # 报表/后台，全栈项目
+/Users/c/openclaw-claude-bridge    # OpenClaw Provider bridge，直连 claude-node
+/Users/c/archive/                   # 已归档的历史代码
+    clawrelay-feishu-server/        #   - 旧版飞书 IM 适配层
+    clawrelay-report/               #   - 旧版报表系统
 ```
 
 ## 4. 标准架构说明
 
-### 4.1 IM 层
+### 4.1 通讯层 (OpenClaw)
 
-IM 层必须满足：
+OpenClaw 作为通讯层，必须满足：
 
-- 使用 WebSocket 长连接
-- 直接通过 `claude-node` 调 Claude
-- 在 IM 应用层管理 session 连续性
-- 产出真实会话数据、日志或接口，供报表层读取
+- 24+ 消息通道支持（Feishu、Discord、Slack 等）
+- Gateway WebSocket 协议（ws://127.0.0.1:18789）
+- Provider 插件机制调用外部 AI 引擎
 
-### 4.2 Claude 执行层
+### 4.2 协议转换层 (openclaw-claude-bridge)
 
-`claude-node` 是唯一标准封装。
+openclaw-claude-bridge 是 OpenClaw Provider 封装，必须满足：
 
-标准期待：
+- OpenAI-compatible HTTP API（POST /v1/chat/completions）
+- Session 映射（OpenClaw session ↔ claude-node session）
+- 健康检查和 Fallback 触发
+
+### 4.3 AI 处理层 (claude-node)
+
+`claude-node` 是 AI 处理层，标准期待：
 
 - 直接 spawn Claude Code CLI
 - 支持 `resume`
 - 支持 CLI 原生工具能力
-- 多模态、结构化内容等能力，只有在真实代码里确认后才允许写成“已支持”
+- Session 生命周期管理
 
 ### 4.3 报表层
 
@@ -143,11 +156,10 @@ IM 层必须满足：
 
 | 主题 | 标准结论 |
 |------|------|
-| IM 执行路径 | 直连 `claude-node` |
-| `clawrelay-api` | 从标准中移除 |
-| 报表系统 | `clawrelay-report` 全栈 |
-| 唯一后台入口 | `http://localhost:5173` |
-| Grafana / Prometheus | 只能算可选运维工具，不是主产品标准 |
+| IM 执行路径 | OpenClaw + openclaw-claude-bridge + claude-node |
+| 归档组件 | `clawrelay-feishu-server`、`clawrelay-report` 已归档 |
+| Provider 机制 | openclaw-claude-bridge 作为 OpenClaw Provider |
+| Fallback | claude-node 宕机时 OpenClaw 上线维修 |
 | SSE | 未确认，不得默认视为已实现 |
 | 隐藏 AI 讨论材料 | 非标准内容，不应保留为平行真相 |
 
