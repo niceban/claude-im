@@ -461,6 +461,12 @@ function ConversationView({ sessionId, onToolCall }: ConversationViewProps) {
     queryKey: ["conversation", sessionId],
   })
 
+  // Reset wsMessages and input when session changes
+  useEffect(() => {
+    setWsMessages([])
+    setInputMessage("")
+  }, [sessionId])
+
   // WebSocket connection
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
