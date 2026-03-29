@@ -15,6 +15,7 @@ from app.integrations.clawrelay import (
     send_admin_message,
     get_admin_session_history,
     list_admin_sessions,
+    rename_admin_session,
 )
 
 router = APIRouter(tags=["metrics"])
@@ -164,6 +165,26 @@ async def read_chat_session_history(
 ) -> dict:
     """Get message history for an admin-managed session."""
     return await get_admin_session_history(relay_session_id, limit=limit)
+
+
+@router.patch("/chat/sessions/{relay_session_id}", tags=["metrics"])
+async def rename_chat_session(
+    relay_session_id: str,
+    request: dict,
+    session: SessionDep,
+    current_user: User = CurrentUser,
+) -> dict:
+    """Rename an admin-managed session (Admin only)."""
+    from fastapi import HTTPException
+
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="只有管理员可以重命名会话")
+
+    new_name = request.get("name", "").strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="会话名称不能为空")
+
+    return await rename_admin_session(relay_session_id, new_name)
 
 
 @router.get("/chat/sessions", tags=["metrics"])

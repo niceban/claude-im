@@ -314,3 +314,15 @@ async def list_admin_sessions(owner_id: Optional[str] = None) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+async def rename_admin_session(relay_session_id: str, name: str) -> dict:
+    """Rename an admin-managed session."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.patch(
+            f"{CLAWRELAY_BASE_URL}/api/v1/admin/sessions/{relay_session_id}",
+            json={"name": name},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
