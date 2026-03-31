@@ -1,55 +1,34 @@
 #!/bin/bash
 # Claude-IM 启动脚本
-# 用法: ./scripts/start.sh
+# 标准架构：feishu-server 直连 claude-node；report 为独立全栈服务
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLAWRELAY_API_DIR="$HOME/clawrelay-api"
-FEISHU_SERVER_DIR="$HOME/clawrelay-feishu-server"
-LOG_DIR="$HOME/claude-im/logs"
+FEISHU_SERVER_DIR="${FEISHU_SERVER_DIR:-$HOME/clawrelay-feishu-server}"
+LOG_DIR="${LOG_DIR:-$HOME/claude-im/logs}"
 
 mkdir -p "$LOG_DIR"
 
-echo "🚀 启动 Claude-IM 服务..."
+echo "启动 Claude-IM（标准模式）..."
+echo "  - IM 路径: clawrelay-feishu-server -> claude-node"
+echo "  - 唯一管理后台入口: http://localhost:5173"
+echo "  - Report 路径: clawrelay-report (独立管理)"
 
-# 检查 clawrelay-api
-if lsof -i :50009 >/dev/null 2>&1; then
-    echo "⚠️  clawrelay-api 已在运行 (端口 50009)"
-else
-    echo "📦 启动 clawrelay-api..."
-    cd "$CLAWRELAY_API_DIR"
-    nohup ./clawrelay-api > "$LOG_DIR/clawrelay-api.log" 2>&1 &
-    sleep 2
-
-    if curl -s http://localhost:50009/health | grep -q "healthy"; then
-        echo "✅ clawrelay-api 启动成功 (PID: $!)"
-    else
-        echo "❌ clawrelay-api 启动失败，查看日志: $LOG_DIR/clawrelay-api.log"
-        exit 1
-    fi
-fi
-
-# 检查 feishu-server
 if ps aux | grep -v grep | grep "python3 main.py" | grep -q "$FEISHU_SERVER_DIR"; then
-    echo "⚠️  feishu-server 已在运行"
+    echo "feishu-server 已在运行"
 else
-    echo "📦 启动 feishu-server..."
+    echo "启动 feishu-server..."
     cd "$FEISHU_SERVER_DIR"
     nohup python3 main.py > "$LOG_DIR/feishu-server.log" 2>&1 &
     sleep 3
 
-    if tail -5 "$LOG_DIR/feishu-server.log" | grep -q "connected\|WebSocket"; then
-        echo "✅ feishu-server 启动成功 (PID: $!)"
+    if tail -5 "$LOG_DIR/feishu-server.log" | grep -qi "connected\\|websocket"; then
+        echo "feishu-server 启动成功"
     else
-        echo "⚠️  feishu-server 状态未知，查看日志: $LOG_DIR/feishu-server.log"
+        echo "feishu-server 状态待确认，查看日志: $LOG_DIR/feishu-server.log"
     fi
 fi
 
 echo ""
-echo "📊 服务状态:"
-curl -s http://localhost:50009/health
-echo ""
-echo "📝 日志位置: $LOG_DIR/"
-echo "   clawrelay-api: $LOG_DIR/clawrelay-api.log"
-echo "   feishu-server: $LOG_DIR/feishu-server.log"
+echo "report 栈不由本脚本直接启动，请在 /Users/c/clawrelay-report 中单独管理。"
+echo "对人使用的后台入口固定为: http://localhost:5173"

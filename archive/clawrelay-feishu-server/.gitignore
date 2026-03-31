@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.env
+logs/
+*.log
+.venv/
+venv/
+config/bots.yaml
+clawrelay-feishu-server/sessions/

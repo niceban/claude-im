@@ -1,0 +1,8 @@
+{
+  "id": "openclaw-claude-bridge",
+  "name": "OpenClaw claude-node Bridge",
+  "version": "0.1.0",
+  "description": "CLI Backend plugin for claude-node integration via Python wrapper",
+  "cliBackends": ["claude-node-cli"],
+  "providers": ["claude-node-cli"]
+}

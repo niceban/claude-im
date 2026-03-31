@@ -1,0 +1,22 @@
+# Task Analysis: Convergence Verification
+
+## Topic
+验证 document-current-project-issues 变更是否真正收敛完成
+
+## Complexity Assessment
+- Score: 1 (Low-Medium)
+- 原因: 这是验证性任务，相对聚焦
+
+## Pipeline Mode
+quick (ideator + challenger, no synthesizer/evaluator)
+
+## Verification Angles
+1. **标准文档一致性** - STANDARD.md, README.md, AGENTS.md 是否相互一致
+2. **冲突词汇清理** - clawrelay-api, 50009, chat-stream 是否已清理
+3. **SSE状态标注** - SSE 是否正确标注为"未确认"
+4. **后台入口唯一性** - localhost:5173 是否确立为唯一入口
+
+## Key Questions
+1. 是否还有遗留的并行架构叙事？
+2. 是否存在应该删除但未删除的文件？
+3. 标准文档之间是否有矛盾？

@@ -1,86 +1,76 @@
 # Deep-Now Cycle 001
 
-## Problem
-1. 把最新结论写入文档
-2. 验证 `Agent()` tool 和多工具组合是否真的因 401 auth 失败
+**问题**: 验证 document-current-project-issues 变更是否真正收敛完成
 
-## 结论（已验证）
+**日期**: 2026-03-28
 
-**所有能力均正常工作：**
+---
 
-| 能力 | 状态 | 备注 |
-|------|------|------|
-| MCP 工具 (web_search) | ✅ | MINIMAX_API_KEY 认证 |
-| /deep-now | ✅ | 单 agent 内循环 |
-| Agent() tool (直接 CLI) | ✅ | 实测返回 PASS |
-| Agent() tool (feishu adapter) | ✅ | 实测返回 PASS，Token 消耗 25207 |
-| 多工具组合 | ✅ | 实测正常 |
-| 直接 API 调用 (无 proxy) | ✅ | Status 200 |
+## Scout 发现
 
-**之前 401 报错的原因（分析）：**
-1. curl 测试缺少 `anthropic-version` header，误导判断
-2. 测试脚本用了错误的 flag `--skip-permissions`（正确是 `--dangerously-skip-permissions`）
-3. `.env` 文件可能在某段时间有错误 token，已被修复
+### 已验证的工作
 
-## Bot 架构（当前正常状态）
+#### 1. Standards Repository (clawrelay-im)
+- ✅ STANDARD.md 已建立为唯一标准
+- ✅ README.md 正确指向 STANDARD.md
+- ✅ AGENTS.md 约束与标准一致
+- ✅ 冲突词汇清理: clawrelay-api, 50009, chat-stream 仅以"废弃声明"形式出现
+- ✅ SSE 正确标注为"未确认"
+- ✅ 5173 确立为唯一后台入口
+- ✅ 脚本不含冲突引用
 
-```
-launchd 进程 (clawrelay-feishu-server)
-└── Python 进程 (main.py) + load_dotenv
-    └── ClaudeController (claude-node subprocess)
-        └── Claude Code CLI subprocess
-            ├── ANTHROPIC_AUTH_TOKEN ✅ (125字符，与shell一致)
-            ├── ANTHROPIC_BASE_URL ✅
-            ├── MCP MiniMax ✅ (MINIMAX_API_KEY)
-            ├── Agent() tool ✅
-            └── 多工具组合 ✅
-```
+#### 2. Feishu Runtime (clawrelay-feishu-server)
+- ✅ README.md 描述直连 claude-node 架构
+- ✅ docs/ 目录仅含技术调研记录，无冲突叙事
+- ✅ 无 clawrelay-api、50009、chat-stream 残留
 
-## 验证记录
+#### 3. Report/Admin (clawrelay-report)
+- ✅ README.md 正确标注 5173 唯一入口
+- ✅ backend/README.md 正确标注 8000 为内部 API
+- ✅ development.md 正确标注 SSE 为"不在本项目标准中"
+- ✅ 无 SSE/chat-stream 路由暴露
 
-### 直接 CLI 测试
-```bash
-claude --print '用 Agent() tool 启动子 agent，让它回复 PASS'
-# 结果: 子 agent 回复结果：**PASS** ✅
-```
+---
 
-### feishu adapter 测试
-```python
-# 通过 claude_node_adapter 完整调用链测试
-result = await orch.handle_text_message(
-    message='请用 Agent() tool 启动一个子 agent，让它回复 PASS'
-)
-# 结果: 子 Agent 执行完毕，回复结果：**PASS**
-# Agent ID: ac0fe05066e94d5d4
-# Token 消耗: 25207 ✅
-```
+## 外部验证
 
-### API 直接调用（无 proxy）
-```python
-# 清除所有 proxy 环境变量后直接调用 MiniMax API
-urllib.request.urlopen('https://api.minimaxi.com/anthropic/v1/messages', ...)
-# 结果: Status 200 ✅（不需要 proxy）
-```
+### /opsx:apply
+- **Progress**: 15/15 tasks complete ✓
+- **结论**: 所有任务已标记完成
 
-## 关键发现
+### /team-brainstorm (Ideator + Challenger)
+- **Ideator 结论**: FULL CONVERGENCE ACHIEVED
+  - 标准文档一致性: 支持收敛
+  - 冲突词汇清理: 支持收敛
+  - SSE状态标注: 支持收敛
+  - 后台入口唯一性: 支持收敛
 
-### token 验证
-- `.env` token (125字符) == Shell token (125字符) == MCP config token
-- 所有 token 完全一致，无差异
-- `load_dotenv(override=False)` 正确加载
+- **Challenger 结论**: 未发现遗留冲突
+  - clawrelay-api 清理: 通过
+  - 50009 清理: 通过
+  - chat-stream 清理: 通过
+  - SSE 状态标注: 通过
+  - 后台入口唯一性: 通过
+  - Grafana 约束: 通过
 
-### proxy 环境变量
-- launchd plist 清理了所有 proxy 变量（http_proxy 等设为空字符串）
-- 但 MiniMax API 无需 proxy 即可直接访问（直接连接返回 200）
+---
 
-### subprocess 启动验证
-- 使用 `--dangerously-skip-permissions` + `--verbose` + `--input-format stream-json --output-format stream-json` 可以正常启动
-- 错误 flag `--skip-permissions` 会导致 subprocess 立即退出（exit=1, stderr: unknown option）
+## 事实链条
 
-## Files
-- `/Users/c/clawrelay-feishu-server/src/adapters/claude_node_adapter.py`
-- `/private/tmp/claude-node/claude_node/controller.py`
-- `/Users/c/clawrelay-feishu-server/src/core/claude_relay_orchestrator.py`
-- `/Users/c/clawrelay-feishu-server/config/bots.yaml`
-- `/Users/c/clawrelay-feishu-server/.env`
-- `~/.claude/.claude.json` — MCP server 配置
+1. **标准体系**: STANDARD.md → README.md → AGENTS.md 三层逻辑自洽
+2. **执行链路**: clawrelay-feishu-server → claude-node → Claude Code CLI (单一路径)
+3. **后台入口**: localhost:5173 (唯一) / localhost:8000 (内部 API)
+4. **能力状态**: SSE 未确认，Grafana 非标准
+5. **文档治理**: 冲突叙事已清理，变更已归档
+
+---
+
+## 未验证假设
+
+无
+
+---
+
+## 下一步
+
+无需进一步行动。变更已完全收敛。
