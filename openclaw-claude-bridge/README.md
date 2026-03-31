@@ -30,7 +30,7 @@ pip install -e .
 ```bash
 export CLAUDE_MODEL="claude-sonnet-4-6"
 export CLAUDE_WORKING_DIR="/path/to/workspace"
-export BRIDGE_PORT=18792
+export BRIDGE_PORT=18793  # Note: 18792 is used by OpenClaw browser relay
 ```
 
 ### 3. Start Bridge Server

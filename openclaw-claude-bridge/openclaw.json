@@ -1,11 +1,13 @@
 {
+  "plugins": [
+    "./src/plugin"
+  ],
   "models": {
     "mode": "merge",
     "providers": {
       "claude-node": {
-        "baseUrl": "http://127.0.0.1:18792",
-        "apiKey": "not-needed",
-        "api": "openai-completions",
+        "backendType": "cli",
+        "backendId": "claude-node-cli",
         "models": [
           {
             "id": "claude-sonnet-4-6",
