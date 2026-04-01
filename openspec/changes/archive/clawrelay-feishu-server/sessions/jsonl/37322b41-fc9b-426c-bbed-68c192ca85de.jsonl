@@ -1,0 +1,6 @@
+{"role": "user", "content": "hi"}
+{"role": "assistant", "content": "你好！有什么可以帮你的吗？"}
+{"role": "user", "content": "继续"}
+{"role": "assistant", "content": "抱歉，我没有正在进行的任务。你想继续做什么？\n\n请告诉我你的需求，比如：\n- 发送文件到飞书\n- 代码开发任务\n- 调试问题\n- 或者是其他事情"}
+{"role": "user", "content": "你叫什么名字？"}
+{"role": "assistant", "content": "我是 Claude，是你的 AI 助手。\n\n有什么需要帮忙的吗？"}

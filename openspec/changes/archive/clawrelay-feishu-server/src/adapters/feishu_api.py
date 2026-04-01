@@ -1,0 +1,314 @@
+"""
+飞书 HTTP API 封装
+
+封装飞书消息相关的 HTTP API，包括：
+- 回复消息（reply）
+- 编辑消息（update）— 用于流式更新
+- 发送消息（create）
+- 下载资源（图片/文件）
+"""
+
+import json
+import logging
+import re
+from typing import Optional
+
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import (
+    CreateMessageRequest,
+    CreateMessageRequestBody,
+    ReplyMessageRequest,
+    ReplyMessageRequestBody,
+    UpdateMessageRequest,
+    UpdateMessageRequestBody,
+    PatchMessageRequest,
+    PatchMessageRequestBody,
+    GetMessageResourceRequest,
+    CreateMessageReactionRequest,
+    CreateMessageReactionRequestBody,
+    DeleteMessageReactionRequest,
+)
+from lark_oapi.api.im.v1.model.emoji import Emoji
+
+logger = logging.getLogger(__name__)
+
+
+class FeishuAPI:
+    """飞书消息 API 封装"""
+
+    def __init__(self, app_id: str, app_secret: str):
+        self.client = lark.Client.builder() \
+            .app_id(app_id) \
+            .app_secret(app_secret) \
+            .log_level(lark.LogLevel.WARNING) \
+            .build()
+        logger.info("[FeishuAPI] 初始化完成")
+
+    async def reply_text(self, message_id: str, text: str) -> Optional[str]:
+        """回复消息（自动选择 text 或 post 类型）
+
+        Args:
+            message_id: 要回复的消息ID
+            text: 回复文本（支持 [text](url) 格式的链接）
+
+        Returns:
+            回复消息的 message_id，失败返回 None
+        """
+        msg_type, content = self._build_content(text)
+        request = ReplyMessageRequest.builder() \
+            .message_id(message_id) \
+            .request_body(ReplyMessageRequestBody.builder()
+                          .msg_type(msg_type)
+                          .content(content)
+                          .build()) \
+            .build()
+
+        response = self.client.im.v1.message.reply(request)
+        if not response.success():
+            logger.error(
+                "[FeishuAPI] 回复消息失败: code=%d, msg=%s",
+                response.code, response.msg
+            )
+            return None
+
+        reply_msg_id = response.data.message_id
+        logger.info("[FeishuAPI] 回复消息成功: reply_msg_id=%s", reply_msg_id)
+        return reply_msg_id
+
+    async def edit_text(self, message_id: str, text: str) -> bool:
+        """编辑消息（自动选择 text 或 post 类型，用于流式更新）
+
+        Args:
+            message_id: 要编辑的消息ID
+            text: 新的文本内容（支持 [text](url) 格式的链接）
+
+        Returns:
+            是否成功
+        """
+        msg_type, content = self._build_content(text)
+        request = UpdateMessageRequest.builder() \
+            .message_id(message_id) \
+            .request_body(UpdateMessageRequestBody.builder()
+                          .msg_type(msg_type)
+                          .content(content)
+                          .build()) \
+            .build()
+
+        response = self.client.im.v1.message.update(request)
+        if not response.success():
+            logger.warning(
+                "[FeishuAPI] 编辑消息失败: code=%d, msg=%s, message_id=%s",
+                response.code, response.msg, message_id
+            )
+            return False
+        return True
+
+    async def send_text(self, receive_id: str, text: str, receive_id_type: str = "chat_id") -> Optional[str]:
+        """主动发送文本消息
+
+        Args:
+            receive_id: 接收方ID
+            text: 文本内容
+            receive_id_type: ID类型（chat_id / open_id / user_id）
+
+        Returns:
+            消息ID，失败返回 None
+        """
+        content = json.dumps({"text": text})
+        request = CreateMessageRequest.builder() \
+            .receive_id_type(receive_id_type) \
+            .request_body(CreateMessageRequestBody.builder()
+                          .receive_id(receive_id)
+                          .msg_type("text")
+                          .content(content)
+                          .build()) \
+            .build()
+
+        response = self.client.im.v1.message.create(request)
+        if not response.success():
+            logger.error(
+                "[FeishuAPI] 发送消息失败: code=%d, msg=%s",
+                response.code, response.msg
+            )
+            return None
+
+        msg_id = response.data.message_id
+        logger.info("[FeishuAPI] 发送消息成功: msg_id=%s", msg_id)
+        return msg_id
+
+    async def send_card(self, receive_id: str, card: dict, receive_id_type: str = "chat_id") -> Optional[str]:
+        """主动发送交互卡片消息
+
+        Args:
+            receive_id: 接收方ID
+            card: 卡片 JSON 对象（包含 header、elements 等）
+            receive_id_type: ID类型（chat_id / open_id / user_id）
+
+        Returns:
+            消息ID，失败返回 None
+        """
+        request = CreateMessageRequest.builder() \
+            .receive_id_type(receive_id_type) \
+            .request_body(CreateMessageRequestBody.builder()
+                          .receive_id(receive_id)
+                          .msg_type("interactive")
+                          .content(json.dumps(card))
+                          .build()) \
+            .build()
+
+        response = self.client.im.v1.message.create(request)
+        if not response.success():
+            logger.error(
+                "[FeishuAPI] 发送卡片失败: code=%d, msg=%s",
+                response.code, response.msg
+            )
+            return None
+
+        msg_id = response.data.message_id
+        logger.info("[FeishuAPI] 发送卡片成功: msg_id=%s", msg_id)
+        return msg_id
+
+    async def patch_card(self, message_id: str, card: dict) -> bool:
+        """PATCH 更新已发送的交互卡片
+
+        Args:
+            message_id: 要更新的消息ID
+            card: 卡片 JSON 对象
+
+        Returns:
+            是否成功
+        """
+        request = PatchMessageRequest.builder() \
+            .message_id(message_id) \
+            .request_body(PatchMessageRequestBody.builder()
+                          .content(json.dumps(card))
+                          .build()) \
+            .build()
+
+        response = self.client.im.v1.message.patch(request)
+        if not response.success():
+            logger.warning(
+                "[FeishuAPI] PATCH卡片失败: code=%d, msg=%s, message_id=%s",
+                response.code, response.msg, message_id
+            )
+            return False
+        logger.info("[FeishuAPI] PATCH卡片成功: message_id=%s", message_id)
+        return True
+
+    async def download_resource(self, message_id: str, file_key: str, resource_type: str = "image") -> Optional[bytes]:
+        """下载消息中的资源文件（图片/文件）
+
+        Args:
+            message_id: 消息ID
+            file_key: 资源文件key
+            resource_type: 资源类型（image / file）
+
+        Returns:
+            文件字节数据，失败返回 None
+        """
+        request = GetMessageResourceRequest.builder() \
+            .message_id(message_id) \
+            .file_key(file_key) \
+            .type(resource_type) \
+            .build()
+
+        response = self.client.im.v1.message_resource.get(request)
+        if not response.success():
+            logger.error(
+                "[FeishuAPI] 下载资源失败: code=%d, msg=%s, file_key=%s",
+                response.code, response.msg, file_key
+            )
+            return None
+
+        logger.info("[FeishuAPI] 下载资源成功: file_key=%s", file_key)
+        return response.file.read()
+
+    async def add_reaction(self, message_id: str, emoji_type: str = "Typing") -> Optional[str]:
+        """给消息添加表情反应
+
+        Args:
+            message_id: 要添加反应的消息ID
+            emoji_type: 表情类型，默认 "Typing"（显示打字动画）
+
+        Returns:
+            reaction_id 成功返回，失败返回 None
+        """
+        request = CreateMessageReactionRequest.builder() \
+            .message_id(message_id) \
+            .request_body(CreateMessageReactionRequestBody.builder()
+                          .reaction_type(Emoji.builder().emoji_type(emoji_type).build())
+                          .build()) \
+            .build()
+
+        response = await self.client.im.v1.message_reaction.acreate(request)
+        if not response.success():
+            logger.warning(
+                "[FeishuAPI] 添加 reaction 失败: code=%d, msg=%s, message_id=%s, emoji_type=%s",
+                response.code, response.msg, message_id, emoji_type
+            )
+            return None
+        reaction_id = response.data.reaction_id if response.data else None
+        logger.info("[FeishuAPI] 添加 reaction 成功: message_id=%s, emoji_type=%s, reaction_id=%s",
+                     message_id, emoji_type, reaction_id)
+        return reaction_id
+
+    async def delete_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """删除消息上的表情反应
+
+        Args:
+            message_id: 消息ID
+            reaction_id: 反应ID（add_reaction 返回的 reaction_id）
+
+        Returns:
+            是否成功
+        """
+        request = DeleteMessageReactionRequest.builder() \
+            .message_id(message_id) \
+            .reaction_id(reaction_id) \
+            .build()
+
+        response = await self.client.im.v1.message_reaction.adelete(request)
+        if not response.success():
+            logger.warning(
+                "[FeishuAPI] 删除 reaction 失败: code=%d, msg=%s, message_id=%s, reaction_id=%s",
+                response.code, response.msg, message_id, reaction_id
+            )
+            return False
+        logger.info("[FeishuAPI] 删除 reaction 成功: message_id=%s, reaction_id=%s", message_id, reaction_id)
+        return True
+
+    # Markdown [text](url) 链接的正则
+    _LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^)]+)\)')
+
+    def _build_content(self, text: str) -> tuple[str, str]:
+        """根据文本内容自动选择消息类型
+
+        包含 [text](url) 链接时使用 post 富文本，否则使用纯 text。
+
+        Returns:
+            (msg_type, content_json)
+        """
+        if self._LINK_RE.search(text):
+            return "post", self._text_to_post_content(text)
+        return "text", json.dumps({"text": text})
+
+    def _text_to_post_content(self, text: str) -> str:
+        """将含 Markdown 链接的文本转为飞书 post 富文本格式"""
+        paragraphs = []
+        for line in text.split("\n"):
+            nodes = []
+            last_end = 0
+            for m in self._LINK_RE.finditer(line):
+                # 链接前的普通文本
+                if m.start() > last_end:
+                    nodes.append({"tag": "text", "text": line[last_end:m.start()]})
+                # 超链接节点
+                nodes.append({"tag": "a", "text": m.group(1), "href": m.group(2)})
+                last_end = m.end()
+            # 剩余的普通文本
+            if last_end < len(line):
+                nodes.append({"tag": "text", "text": line[last_end:]})
+            if not nodes:
+                nodes.append({"tag": "text", "text": ""})
+            paragraphs.append(nodes)
+        return json.dumps({"zh_cn": {"content": paragraphs}})
