@@ -1,0 +1,20 @@
+version: 1.0
+type: archive
+archived_at: 2026-04-02
+summary: OpenClaw + claude-node integration architecture findings
+
+key_findings:
+  - OpenClaw does NOT support `input: http` mode (only `arg` and `stdin`)
+  - cliBackends is text-only fallback, not primary execution path
+  - models.providers is the correct path for full capability
+  - daemon-pool design was based on wrong assumption
+
+conflicts_resolved:
+  - daemon-pool/proposal.md: `input: arg → input: http` is impossible
+  - daemon-pool/design.md: HTTP mode risk confirmed
+  - daemon-pool/tasks.md: Phase 5 tasks need redesign
+
+next_steps:
+  - Implement bridge service with `/v1/chat/completions`
+  - Update models.providers config
+  - Keep cliBackends as fallback

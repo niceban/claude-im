@@ -147,6 +147,10 @@
 
 6. **sessionIdFields 配置**：openclaw.json 的 cliBackends 配置中添加了 `sessionIdFields` 以确保 Gateway 能从 wrapper 结果中提取 session_id
 
+7. **ANTHROPIC_* 环境变量映射**（2026-04-03）：Claude CLI 只读取 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL`，不认 `MINIMAX_*`。在 `controller.py` 中添加了 `MINIMAX_*` → `ANTHROPIC_*` 映射：
+   - `controller.py` line 285-287: `ANTHROPIC_API_KEY` 映射自 `os.environ.get("MINIMAX_API_KEY", "")`
+   - 直接测试验证：`MINIMAX_*` only → 401 auth 失败；`ANTHROPIC_*` only → 成功
+
 ## 项目结构
 
 ```
